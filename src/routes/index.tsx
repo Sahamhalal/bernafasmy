@@ -26,23 +26,25 @@ const PHASES: { key: PhaseKey; label: string }[] = [
   { key: "exhale", label: "Exhale" },
   { key: "hold2", label: "Pause" },
 ];
-const PRESETS: Record<string, Record<PhaseKey, number>> = {
+type Timing = Record<PhaseKey, number>;
+const PRESETS = {
   Box: { inhale: 4, hold1: 4, exhale: 4, hold2: 4 },
   "4-7-8": { inhale: 4, hold1: 7, exhale: 8, hold2: 0 },
   Coherent: { inhale: 5.5, hold1: 0, exhale: 5.5, hold2: 0 },
   Calm: { inhale: 4, hold1: 2, exhale: 6, hold2: 2 },
-};
+} satisfies Record<string, Timing>;
+type PresetKey = keyof typeof PRESETS;
 
 /** RMSSD in ms from RR intervals (ms) */
 export function rmssd(rr: number[]) {
   if (rr.length < 2) return 0;
   let s = 0;
-  for (let i = 1; i < rr.length; i++) s += (rr[i] - rr[i - 1]) ** 2;
+  for (let i = 1; i < rr.length; i++) s += (rr[i]! - rr[i - 1]!) ** 2;
   return Math.sqrt(s / (rr.length - 1));
 }
 
 function Index() {
-  const [t, setT] = useState(PRESETS.Box);
+  const [t, setT] = useState<Timing>(PRESETS.Box);
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState(0);
   const [remain, setRemain] = useState(t.inhale);
@@ -65,11 +67,11 @@ function Index() {
         let next = phase;
         for (let i = 0; i < 4; i++) {
           next = (next + 1) % 4;
-          if (t[PHASES[next].key] > 0) break;
+          if (t[PHASES[next]!.key] > 0) break;
         }
         if (next <= phase) setCycles((c) => c + 1);
         setPhase(next);
-        return t[PHASES[next].key];
+        return t[PHASES[next]!.key];
       });
     }, 100);
     return () => clearInterval(id);
@@ -96,7 +98,7 @@ function Index() {
     if (source !== "demo") return;
     let base = 72;
     const id = setInterval(() => {
-      const k = PHASES[phaseRef.current].key;
+      const k = PHASES[phaseRef.current]!.key;
       const target = running ? (k === "inhale" ? 74 : k === "exhale" ? 62 : 67) : 72;
       base += (target - base) * 0.3 + (Math.random() - 0.5) * 2;
       setBpm(Math.round(base));
@@ -146,7 +148,7 @@ function Index() {
     setCycles(0);
   };
 
-  const cur = PHASES[phase];
+  const cur = PHASES[phase]!;
   const dur = t[cur.key] || 1;
   const prog = 1 - remain / dur;
   const scale =
@@ -232,7 +234,7 @@ function Index() {
           <section className="rounded-lg border bg-card p-6">
             <h2 className="mb-3 font-display text-xl">Timing</h2>
             <div className="mb-4 flex flex-wrap gap-2">
-              {Object.keys(PRESETS).map((k) => (
+              {(Object.keys(PRESETS) as PresetKey[]).map((k) => (
                 <button
                   key={k}
                   onClick={() => {
