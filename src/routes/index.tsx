@@ -34,6 +34,8 @@ const PRESETS = {
   Calm: { inhale: 4, hold1: 2, exhale: 6, hold2: 2 },
 } satisfies Record<string, Timing>;
 type PresetKey = keyof typeof PRESETS;
+type Reading = { bpm: number | null; hrv: number | null };
+type Session = { id: string; date: number; name: string; timing: Timing; seconds: number; cycles: number; before: Reading; after: Reading };
 
 /** RMSSD in ms from RR intervals (ms) */
 export function rmssd(rr: number[]) {
@@ -141,7 +143,55 @@ function Index() {
     }
   };
 
+  // session history (saved on this device)
+  const [sessions, setSessions] = useState<Session[]>([]);
+  useEffect(() => {
+    try {
+      setSessions(JSON.parse(localStorage.getItem("tide-sessions") || "[]"));
+    } catch {}
+  }, []);
+  const saveSessions = (s: Session[]) => {
+    setSessions(s);
+    localStorage.setItem("tide-sessions", JSON.stringify(s));
+  };
+  const startRef = useRef<{ at: number; bpm: number | null; hrv: number | null; active: number; resumed: number } | null>(null);
+
+  const toggle = () => {
+    const now = Date.now();
+    if (!running) {
+      if (!startRef.current) startRef.current = { at: now, bpm, hrv, active: 0, resumed: now };
+      else startRef.current.resumed = now;
+    } else if (startRef.current) {
+      startRef.current.active += now - startRef.current.resumed;
+    }
+    setRunning(!running);
+  };
+
   const reset = () => {
+    const s = startRef.current;
+    if (s) {
+      const active = s.active + (running ? Date.now() - s.resumed : 0);
+      const seconds = Math.round(active / 1000);
+      if (seconds >= 15) {
+        const preset = (Object.keys(PRESETS) as PresetKey[]).find((k) =>
+          PHASES.every((p) => PRESETS[k][p.key] === t[p.key]),
+        );
+        saveSessions([
+          {
+            id: String(s.at),
+            date: s.at,
+            name: preset ?? "Custom",
+            timing: { ...t },
+            seconds,
+            cycles,
+            before: { bpm: s.bpm, hrv: s.hrv },
+            after: { bpm, hrv },
+          },
+          ...sessions,
+        ].slice(0, 50));
+      }
+    }
+    startRef.current = null;
     setRunning(false);
     setPhase(0);
     setRemain(t.inhale);
@@ -183,13 +233,13 @@ function Index() {
           <div className="mt-6 text-sm text-muted-foreground">Cycles: {cycles}</div>
           <div className="mt-4 flex gap-3">
             <button
-              onClick={() => setRunning((r) => !r)}
+              onClick={toggle}
               className="rounded-full bg-primary px-8 py-3 font-semibold text-primary-foreground transition hover:opacity-90"
             >
               {running ? "Pause" : "Start"}
             </button>
             <button onClick={reset} className="rounded-full border px-6 py-3 hover:bg-muted">
-              Reset
+              {startRef.current ? "Finish & save" : "Reset"}
             </button>
           </div>
         </section>
@@ -268,7 +318,64 @@ function Index() {
           </section>
         </div>
       </div>
+
+      <section className="mt-6 rounded-lg border bg-card p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-display text-xl">Session history</h2>
+          {sessions.length > 0 && (
+            <button onClick={() => saveSessions([])} className="text-sm text-muted-foreground hover:text-foreground">
+              Clear
+            </button>
+          )}
+        </div>
+        {sessions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Finish a session (at least 15 seconds) to see it here with your before and after heart readings.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {sessions.map((s) => (
+              <div key={s.id} className="grid gap-3 rounded-lg bg-muted p-4 sm:grid-cols-[1.2fr_1fr_1fr]">
+                <div>
+                  <div className="font-semibold">{s.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(s.date).toLocaleString()} · {fmtDur(s.seconds)} · {s.cycles} cycles
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {s.timing.inhale}-{s.timing.hold1}-{s.timing.exhale}-{s.timing.hold2}s
+                  </div>
+                </div>
+                <Delta label="BPM" before={s.before.bpm} after={s.after.bpm} goodWhenDown />
+                <Delta label="HRV ms" before={s.before.hrv} after={s.after.hrv} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </main>
+  );
+}
+
+function fmtDur(s: number) {
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function Delta({ label, before, after, goodWhenDown }: { label: string; before: number | null; after: number | null; goodWhenDown?: boolean }) {
+  const d = before != null && after != null ? after - before : null;
+  const good = d != null && (goodWhenDown ? d < 0 : d > 0);
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="tabular-nums">
+        {before ?? "--"} → <span className="font-semibold">{after ?? "--"}</span>
+        {d != null && d !== 0 && (
+          <span className={`ml-2 text-sm ${good ? "text-primary" : "text-accent"}`}>
+            {d > 0 ? "+" : ""}
+            {d}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
