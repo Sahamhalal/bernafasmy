@@ -36,7 +36,28 @@ const PRESETS = {
 } satisfies Record<string, Timing>;
 type PresetKey = keyof typeof PRESETS;
 type Reading = { bpm: number | null; hrv: number | null };
-type Session = { id: string; date: number; name: string; timing: Timing; seconds: number; cycles: number; before: Reading; after: Reading };
+type Session = { id: string; date: number; name: string; timing: Timing; seconds: number; cycles: number; before: Reading; after: Reading; whm?: { breaths: number; rounds: number; retention: number } };
+
+// Wim Hof Method: rapid power breaths, a long hold after the final exhale, then a recovery breath
+type WhmSettings = { breaths: number; breathSeconds: number; retention: number; recoveryHold: number; rounds: number };
+const WHM_DEFAULT: WhmSettings = { breaths: 30, breathSeconds: 2, retention: 90, recoveryHold: 15, rounds: 3 };
+type WhmKind = "inhale" | "exhale" | "hold" | "recovery-hold";
+type WhmStep = { label: string; dur: number; kind: WhmKind };
+
+function buildWhmScript(s: WhmSettings): WhmStep[] {
+  const steps: WhmStep[] = [];
+  for (let r = 0; r < s.rounds; r++) {
+    for (let i = 0; i < s.breaths; i++) {
+      steps.push({ label: `Breath ${i + 1}/${s.breaths} — Inhale`, dur: s.breathSeconds, kind: "inhale" });
+      steps.push({ label: `Breath ${i + 1}/${s.breaths} — Exhale`, dur: s.breathSeconds, kind: "exhale" });
+    }
+    steps.push({ label: "Hold — let go", dur: s.retention, kind: "hold" });
+    steps.push({ label: "Recovery breath — Inhale", dur: 3, kind: "inhale" });
+    steps.push({ label: "Recovery breath — Hold", dur: s.recoveryHold, kind: "recovery-hold" });
+    steps.push({ label: "Recovery breath — Exhale", dur: 2, kind: "exhale" });
+  }
+  return steps;
+}
 
 /** RMSSD in ms from RR intervals (ms) */
 export function rmssd(rr: number[]) {
@@ -52,6 +73,11 @@ function Index() {
   const [phase, setPhase] = useState(0);
   const [remain, setRemain] = useState(t.inhale);
   const [cycles, setCycles] = useState(0);
+  const [mode, setMode] = useState<"phases" | "whm">("phases");
+  const [whm, setWhm] = useState<WhmSettings>(WHM_DEFAULT);
+  const [whmStep, setWhmStep] = useState<{ label: string; remain: number; kind: WhmKind }>({ label: "", remain: 0, kind: "inhale" });
+  const whmIdxRef = useRef(0);
+  const whmRemainRef = useRef(0);
 
   const [bpm, setBpm] = useState<number | null>(null);
   const [hrv, setHrv] = useState<number | null>(null);
@@ -83,7 +109,7 @@ function Index() {
 
   // breathing timer
   useEffect(() => {
-    if (!running) return;
+    if (!running || mode !== "phases") return;
     const id = setInterval(() => {
       setRemain((r) => {
         if (r > 0.1) return +(r - 0.1).toFixed(1);
@@ -99,7 +125,51 @@ function Index() {
       });
     }, 100);
     return () => clearInterval(id);
-  }, [running, phase, t]);
+  }, [running, phase, t, mode]);
+
+  // WHM timer: rapid power breaths, retention hold, then a recovery breath
+  useEffect(() => {
+    if (!running || mode !== "whm") return;
+    const script = buildWhmScript(whm);
+    if (script.length === 0) return;
+    let idx = whmIdxRef.current;
+    if (idx >= script.length) idx = 0;
+    whmIdxRef.current = idx;
+    if (idx === 0) {
+      const first = script[0]!;
+      whmRemainRef.current = first.dur;
+      setWhmStep({ label: first.label, remain: first.dur, kind: first.kind });
+    } else {
+      whmRemainRef.current = whmStep.remain;
+    }
+    const id = setInterval(() => {
+      const r = +(whmRemainRef.current - 0.1).toFixed(1);
+      if (r > 0.1) {
+        whmRemainRef.current = r;
+        setWhmStep((prev) => ({ ...prev, remain: r }));
+        return;
+      }
+      const next = whmIdxRef.current + 1;
+      if (next >= script.length) {
+        whmIdxRef.current = script.length;
+        setWhmStep((prev) => ({ ...prev, label: "Round complete", remain: 0, kind: "exhale" }));
+        return;
+      }
+      whmIdxRef.current = next;
+      const s = script[next]!;
+      whmRemainRef.current = s.dur;
+      const perRound = whm.breaths * 2 + 4;
+      const inRound = (next - 1) % perRound;
+      if (inRound % 2 === 1 && inRound < whm.breaths * 2) setCycles((c) => c + 1);
+      setWhmStep({ label: s.label, remain: s.dur, kind: s.kind });
+    }, 100);
+    return () => clearInterval(id);
+  }, [running, mode, whm]);
+
+  // stop automatically once the WHM script finishes
+  useEffect(() => {
+    if (running && mode === "whm" && whmIdxRef.current >= buildWhmScript(whm).length) setRunning(false);
+  }, [running, mode, whmStep, whm]);
 
   const pushRR = (rrs: number[]) => {
     let at = Date.now();
@@ -220,6 +290,7 @@ function Index() {
       const active = s.active + (running ? Date.now() - s.resumed : 0);
       const seconds = Math.round(active / 1000);
       if (seconds >= 15) {
+        const isWhm = mode === "whm";
         const preset = (Object.keys(PRESETS) as PresetKey[]).find((k) =>
           PHASES.every((p) => PRESETS[k][p.key] === t[p.key]),
         );
@@ -227,12 +298,15 @@ function Index() {
           {
             id: String(s.at),
             date: s.at,
-            name: preset ?? "Custom",
-            timing: { ...t },
+            name: isWhm ? `WHM ${whm.breaths}×${whm.rounds}` : preset ?? "Custom",
+            timing: isWhm
+              ? { inhale: whm.breathSeconds, hold1: whm.recoveryHold, exhale: whm.breathSeconds, hold2: whm.retention }
+              : { ...t },
             seconds,
             cycles,
             before: { bpm: s.bpm, hrv: s.hrv },
             after: { bpm, hrv },
+            whm: isWhm ? { breaths: whm.breaths, rounds: whm.rounds, retention: whm.retention } : undefined,
           },
           ...sessions,
         ].slice(0, 50));
@@ -243,6 +317,9 @@ function Index() {
     setPhase(0);
     setRemain(t.inhale);
     setCycles(0);
+    whmIdxRef.current = 0;
+    whmRemainRef.current = 0;
+    setWhmStep({ label: "", remain: 0, kind: "inhale" });
   };
 
   const cur = PHASES[phase] ?? { key: "inhale" as const, label: "Inhale" };
@@ -251,7 +328,17 @@ function Index() {
   const scale =
     cur.key === "inhale" ? 0.55 + 0.45 * prog : cur.key === "exhale" ? 1 - 0.45 * prog : cur.key === "hold1" ? 1 : 0.55;
   const total = PHASES.reduce((a, p) => a + t[p.key], 0);
-  const bpmBreaths = total ? (60 / total).toFixed(1) : "0";
+  const matchesPreset = (k: PresetKey) => PHASES.every((p) => PRESETS[k][p.key] === t[p.key]);
+  const whmDone = mode === "whm" && whmIdxRef.current >= buildWhmScript(whm).length;
+  const whmProg = whmStep.dur ? 1 - whmStep.remain / whmStep.dur : 0;
+  const whmScale =
+    whmStep.kind === "inhale" ? 0.55 + 0.45 * whmProg
+    : whmStep.kind === "exhale" ? 1 - 0.45 * whmProg
+    : whmStep.kind === "recovery-hold" ? 1 : 0.55;
+  const showLabel = mode === "whm" ? whmStep.label : cur.label;
+  const showRemain = mode === "whm" ? whmStep.remain : remain;
+  const showScale = mode === "whm" ? whmScale : scale;
+  const bpmBreaths = mode === "whm" ? (60 / (whm.breathSeconds * 2)).toFixed(1) : total ? (60 / total).toFixed(1) : "0";
   const hrvLabel = hrv == null ? "" : hrv > 50 ? "Relaxed" : hrv > 25 ? "Balanced" : "Stressed";
 
   return (
@@ -271,14 +358,14 @@ function Index() {
             <div
               className="breath-orb absolute inset-0 rounded-full"
               data-coherence={coherentTiming ? coherence : "red"}
-              style={{ transform: `scale(${running ? scale : 0.6})` }}
+              style={{ transform: `scale(${running ? showScale : 0.6})` }}
             />
             <div className="relative text-center">
-              <div className="font-display text-3xl">{running ? cur.label : "Ready"}</div>
-              <div className="mt-1 text-5xl font-semibold tabular-nums">{running ? Math.ceil(remain) : "—"}</div>
+              <div className="font-display text-3xl">{running ? showLabel : mode === "whm" && whmDone ? "Complete" : "Ready"}</div>
+              <div className="mt-1 text-5xl font-semibold tabular-nums">{running ? Math.ceil(showRemain) : "—"}</div>
             </div>
           </div>
-          <div className="mt-6 text-sm text-muted-foreground">Cycles: {cycles}</div>
+          <div className="mt-6 text-sm text-muted-foreground">{mode === "whm" ? "Breaths" : "Cycles"}: {cycles}</div>
           {coherentTiming && (
             <div className="mt-2 text-center" role="status">
               <div className="coherence-status text-sm" data-coherence={coherence}>
@@ -347,33 +434,74 @@ function Index() {
                 <button
                   key={k}
                   onClick={() => {
+                    setMode("phases");
                     setT(PRESETS[k]);
                     setPhase(0);
                     setRemain(PRESETS[k].inhale);
                   }}
-                  className="rounded-full border px-3 py-1 text-sm hover:bg-muted"
+                  aria-pressed={mode === "phases" && matchesPreset(k)}
+                  className={`rounded-full border px-3 py-1 text-sm hover:bg-muted ${mode === "phases" && matchesPreset(k) ? "border-primary text-primary" : ""}`}
                 >
                   {k}
                 </button>
               ))}
+              <button
+                onClick={() => setMode("whm")}
+                aria-pressed={mode === "whm"}
+                className={`rounded-full border px-3 py-1 text-sm font-semibold hover:bg-muted ${mode === "whm" ? "border-primary text-primary" : ""}`}
+              >
+                WHM
+              </button>
             </div>
-            {PHASES.map((p, i) => (
-              <label key={p.key} className="mb-3 block">
-                <div className="flex justify-between text-sm">
-                  <span>{i === 1 ? "Pause after inhale" : i === 3 ? "Pause after exhale" : p.label}</span>
-                  <span className="tabular-nums text-muted-foreground">{t[p.key]}s</span>
-                </div>
-                <input
-                  type="range"
-                  min={p.key === "inhale" || p.key === "exhale" ? 1 : 0}
-                  max={12}
-                  step={0.5}
-                  value={t[p.key]}
-                  onChange={(e) => setT({ ...t, [p.key]: +e.target.value })}
-                  className="w-full"
-                />
-              </label>
-            ))}
+            {mode === "phases" ? (
+              PHASES.map((p, i) => (
+                <label key={p.key} className="mb-3 block">
+                  <div className="flex justify-between text-sm">
+                    <span>{i === 1 ? "Pause after inhale" : i === 3 ? "Pause after exhale" : p.label}</span>
+                    <span className="tabular-nums text-muted-foreground">{t[p.key]}s</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={p.key === "inhale" || p.key === "exhale" ? 1 : 0}
+                    max={12}
+                    step={0.5}
+                    value={t[p.key]}
+                    onChange={(e) => setT({ ...t, [p.key]: +e.target.value })}
+                    className="w-full"
+                  />
+                </label>
+              ))
+            ) : (
+              <div>
+                <p className="mb-4 text-xs text-muted-foreground">
+                  Wim Hof Method: {whm.breaths} fast power breaths, hold after the final exhale, then one deep recovery breath — repeated {whm.rounds}×.
+                </p>
+                {([
+                  ["Breaths per round", "breaths", 5, 40, 5],
+                  ["Breath length (s)", "breathSeconds", 1, 4, 0.5],
+                  ["Retention hold (s)", "retention", 15, 180, 15],
+                  ["Recovery hold (s)", "recoveryHold", 5, 30, 5],
+                  ["Rounds", "rounds", 1, 8, 1],
+                ] as const).map(([label, key, min, max, step]) => (
+                  <label key={key} className="mb-3 block">
+                    <div className="flex justify-between text-sm">
+                      <span>{label}</span>
+                      <span className="tabular-nums text-muted-foreground">{whm[key]}{key === "breaths" || key === "rounds" ? "" : "s"}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={min}
+                      max={max}
+                      step={step}
+                      value={whm[key]}
+                      disabled={running}
+                      onChange={(e) => setWhm({ ...whm, [key]: +e.target.value } as WhmSettings)}
+                      className="w-full"
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>
@@ -401,7 +529,9 @@ function Index() {
                     {new Date(s.date).toLocaleString()} · {fmtDur(s.seconds)} · {s.cycles} cycles
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {s.timing.inhale}-{s.timing.hold1}-{s.timing.exhale}-{s.timing.hold2}s
+                    {s.whm
+                      ? `${s.whm.breaths} breaths · ${s.whm.retention}s hold · ${s.whm.rounds} rounds`
+                      : `${s.timing.inhale}-${s.timing.hold1}-${s.timing.exhale}-${s.timing.hold2}s`}
                   </div>
                 </div>
                 <Delta label="BPM" before={s.before.bpm} after={s.after.bpm} goodWhenDown />
