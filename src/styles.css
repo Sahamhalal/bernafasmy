@@ -30,6 +30,9 @@
   --border: oklch(1 0 0 / 10%);
   --pulse: oklch(0.7 0.18 20);
   --glow: radial-gradient(circle, oklch(0.8 0.12 175 / 0.55), oklch(0.8 0.12 175 / 0.05) 70%);
+  --coherence-red: oklch(0.7 0.2 25);
+  --coherence-blue: oklch(0.7 0.17 250);
+  --coherence-green: oklch(0.76 0.19 145);
 }
 
 @layer base {
@@ -43,6 +46,16 @@
 }
 
 .breath-orb { background: var(--glow); box-shadow: 0 0 80px oklch(0.8 0.12 175 / 0.35); }
+.breath-orb[data-coherence] {
+  background: radial-gradient(circle, color-mix(in oklch, var(--coherence-colour) 65%, transparent), color-mix(in oklch, var(--coherence-colour) 8%, transparent) 70%);
+  box-shadow: 0 0 80px color-mix(in oklch, var(--coherence-colour) 35%, transparent);
+  transition: background 1s ease, box-shadow 1s ease;
+}
+[data-coherence="red"] { --coherence-colour: var(--coherence-red); }
+[data-coherence="blue"] { --coherence-colour: var(--coherence-blue); }
+[data-coherence="green"] { --coherence-colour: var(--coherence-green); }
+.coherence-status { color: var(--coherence-colour); }
+@media (prefers-reduced-motion: reduce) { .breath-orb[data-coherence] { transition: none; } }
 @keyframes beat { 0%,100% { transform: scale(1) } 50% { transform: scale(1.25) } }
 .beat { animation: beat 0.8s ease-in-out infinite; }
 input[type="range"] { accent-color: var(--primary); }

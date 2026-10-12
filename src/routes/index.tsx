@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { coherenceFeedback, hasBreathingRhythm, type HeartSample, type CoherenceLevel } from "@/lib/coherence";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,7 +42,7 @@ type Session = { id: string; date: number; name: string; timing: Timing; seconds
 export function rmssd(rr: number[]) {
   if (rr.length < 2) return 0;
   let s = 0;
-  for (let i = 1; i < rr.length; i++) s += (rr[i]! - rr[i - 1]!) ** 2;
+  for (let i = 1; i < rr.length; i++) s += ((rr[i] ?? 0) - (rr[i - 1] ?? 0)) ** 2;
   return Math.sqrt(s / (rr.length - 1));
 }
 
@@ -58,6 +59,26 @@ function Index() {
   const [devName, setDevName] = useState("");
   const [err, setErr] = useState("");
   const rrRef = useRef<number[]>([]);
+  const heartSamplesRef = useRef<HeartSample[]>([]);
+  const steadySinceRef = useRef<number | null>(null);
+  const [coherence, setCoherence] = useState<CoherenceLevel>("red");
+  const [steadySeconds, setSteadySeconds] = useState(0);
+  const coherentTiming = PHASES.every((p) => t[p.key] === PRESETS.Coherent[p.key]);
+  useEffect(() => {
+    heartSamplesRef.current = [];
+    steadySinceRef.current = null;
+    setCoherence("red");
+    setSteadySeconds(0);
+    if (!running || !coherentTiming || source === "none") return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      const feedback = coherenceFeedback(hasBreathingRhythm(heartSamplesRef.current, now, 11), now, steadySinceRef.current);
+      steadySinceRef.current = feedback.since;
+      setCoherence(feedback.level);
+      setSteadySeconds(feedback.since === null ? 0 : Math.floor((now - feedback.since) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running, coherentTiming, source]);
   const [history, setHistory] = useState<{ bpm: number; hrv: number }[]>([]);
 
   // breathing timer
@@ -69,17 +90,25 @@ function Index() {
         let next = phase;
         for (let i = 0; i < 4; i++) {
           next = (next + 1) % 4;
-          if (t[PHASES[next]!.key] > 0) break;
+          const nextPhase = PHASES[next];
+          if (nextPhase && t[nextPhase.key] > 0) break;
         }
         if (next <= phase) setCycles((c) => c + 1);
         setPhase(next);
-        return t[PHASES[next]!.key];
+        return t[(PHASES[next] ?? PHASES[0] ?? { key: "inhale" }).key];
       });
     }, 100);
     return () => clearInterval(id);
   }, [running, phase, t]);
 
   const pushRR = (rrs: number[]) => {
+    let at = Date.now();
+    const stamped: HeartSample[] = [];
+    for (const rr of [...rrs].reverse()) {
+      stamped.unshift({ at, rr });
+      at -= rr;
+    }
+    heartSamplesRef.current = [...heartSamplesRef.current, ...stamped].filter((s) => Date.now() - s.at <= 45000);
     rrRef.current = [...rrRef.current, ...rrs].slice(-60);
     const v = Math.round(rmssd(rrRef.current));
     if (rrRef.current.length > 3) setHrv(v);
@@ -100,7 +129,7 @@ function Index() {
     if (source !== "demo") return;
     let base = 72;
     const id = setInterval(() => {
-      const k = PHASES[phaseRef.current]!.key;
+      const k = PHASES[phaseRef.current]?.key;
       const target = running ? (k === "inhale" ? 74 : k === "exhale" ? 62 : 67) : 72;
       base += (target - base) * 0.3 + (Math.random() - 0.5) * 2;
       setBpm(Math.round(base));
@@ -198,7 +227,7 @@ function Index() {
     setCycles(0);
   };
 
-  const cur = PHASES[phase]!;
+  const cur = PHASES[phase] ?? { key: "inhale" as const, label: "Inhale" };
   const dur = t[cur.key] || 1;
   const prog = 1 - remain / dur;
   const scale =
@@ -223,6 +252,7 @@ function Index() {
             <div className="absolute inset-0 rounded-full border border-primary/20" />
             <div
               className="breath-orb absolute inset-0 rounded-full"
+              data-coherence={coherentTiming ? coherence : undefined}
               style={{ transform: `scale(${running ? scale : 0.6})`, transition: "transform 0.1s linear" }}
             />
             <div className="relative text-center">
@@ -231,6 +261,17 @@ function Index() {
             </div>
           </div>
           <div className="mt-6 text-sm text-muted-foreground">Cycles: {cycles}</div>
+          {coherentTiming && (
+            <div className="mt-2 text-center" role="status">
+              <div className="coherence-status text-sm" data-coherence={coherence}>
+                {coherence === "green" ? "Sustained rhythm" : coherence === "blue" ? "Steady rhythm" : "Finding rhythm"}
+                {steadySeconds > 0 && ` · ${fmtDur(steadySeconds)}`}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {source === "demo" ? "Simulated heart readings · Estimate" : "Heart rhythm estimate · Not a medical score"}
+              </div>
+            </div>
+          )}
           <div className="mt-4 flex gap-3">
             <button
               onClick={toggle}
