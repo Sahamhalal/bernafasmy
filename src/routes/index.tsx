@@ -147,8 +147,16 @@ function Index() {
     }
     try {
       const device = await nav.bluetooth.requestDevice({ filters: [{ services: ["heart_rate"] }] });
-      const server = await device.gatt.connect();
-      const svc = await server.getPrimaryService("heart_rate");
+      // The link can drop right after pairing; retry the GATT connect once.
+      let server = device.gatt;
+      if (!server.connected) server = await server.connect();
+      let svc;
+      try {
+        svc = await server.getPrimaryService("heart_rate");
+      } catch {
+        server = await device.gatt.connect();
+        svc = await server.getPrimaryService("heart_rate");
+      }
       const ch = await svc.getCharacteristic("heart_rate_measurement");
       await ch.startNotifications();
       ch.addEventListener("characteristicvaluechanged", (e: any) => {
@@ -164,11 +172,21 @@ function Index() {
         setBpm(hr);
         if (rrs.length) pushRR(rrs);
       });
-      device.addEventListener("gattserverdisconnected", () => setSource("none"));
+      device.addEventListener("gattserverdisconnected", () => {
+        setSource("none");
+        setBpm(null);
+        setErr("Heart monitor disconnected. Tap “Connect heart monitor” to reconnect.");
+      });
       setDevName(device.name || "Heart rate monitor");
       setSource("ble");
     } catch (e: any) {
-      if (e?.name !== "NotFoundError") setErr(e?.message || "Connection failed");
+      if (e?.name === "NotFoundError") return;
+      const msg = String(e?.message || "");
+      setErr(
+        /GATT Server is disconnected|retrieve services/i.test(msg)
+          ? "The monitor dropped the connection. Keep it close and awake, then tap “Connect heart monitor” again."
+          : msg || "Connection failed",
+      );
     }
   };
 
