@@ -47,7 +47,7 @@
 
 .breath-orb { background: var(--glow); box-shadow: 0 0 80px oklch(0.8 0.12 175 / 0.35); }
 .breath-orb[data-coherence] {
-  background: color-mix(in oklch, var(--coherence-colour) 60%, var(--card));
+  background: color-mix(in srgb, var(--coherence-colour) 60%, var(--card));
   border: 4px solid var(--coherence-colour);
   box-shadow: 0 0 40px color-mix(in oklch, var(--coherence-colour) 35%, transparent);
   transition: transform 0.1s linear, background-color 1s ease, border-color 1s ease, box-shadow 1s ease;
