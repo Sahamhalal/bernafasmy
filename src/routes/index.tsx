@@ -252,8 +252,8 @@ function Index() {
             <div className="absolute inset-0 rounded-full border border-primary/20" />
             <div
               className="breath-orb absolute inset-0 rounded-full"
-              data-coherence={coherentTiming ? coherence : undefined}
-              style={{ transform: `scale(${running ? scale : 0.6})`, transition: "transform 0.1s linear" }}
+              data-coherence={coherentTiming ? coherence : "red"}
+              style={{ transform: `scale(${running ? scale : 0.6})` }}
             />
             <div className="relative text-center">
               <div className="font-display text-3xl">{running ? cur.label : "Ready"}</div>
