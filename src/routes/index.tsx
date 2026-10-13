@@ -75,7 +75,7 @@ function Index() {
   const [cycles, setCycles] = useState(0);
   const [mode, setMode] = useState<"phases" | "whm">("phases");
   const [whm, setWhm] = useState<WhmSettings>(WHM_DEFAULT);
-  const [whmStep, setWhmStep] = useState<{ label: string; remain: number; kind: WhmKind }>({ label: "", remain: 0, kind: "inhale" });
+  const [whmStep, setWhmStep] = useState<{ label: string; dur: number; remain: number; kind: WhmKind }>({ label: "", dur: 0, remain: 0, kind: "inhale" });
   const whmIdxRef = useRef(0);
   const whmRemainRef = useRef(0);
 
@@ -138,7 +138,7 @@ function Index() {
     if (idx === 0) {
       const first = script[0]!;
       whmRemainRef.current = first.dur;
-      setWhmStep({ label: first.label, remain: first.dur, kind: first.kind });
+      setWhmStep({ label: first.label, dur: first.dur, remain: first.dur, kind: first.kind });
     } else {
       whmRemainRef.current = whmStep.remain;
     }
@@ -161,7 +161,7 @@ function Index() {
       const perRound = whm.breaths * 2 + 4;
       const inRound = (next - 1) % perRound;
       if (inRound % 2 === 1 && inRound < whm.breaths * 2) setCycles((c) => c + 1);
-      setWhmStep({ label: s.label, remain: s.dur, kind: s.kind });
+      setWhmStep({ label: s.label, dur: s.dur, remain: s.dur, kind: s.kind });
     }, 100);
     return () => clearInterval(id);
   }, [running, mode, whm]);
@@ -306,7 +306,7 @@ function Index() {
             cycles,
             before: { bpm: s.bpm, hrv: s.hrv },
             after: { bpm, hrv },
-            whm: isWhm ? { breaths: whm.breaths, rounds: whm.rounds, retention: whm.retention } : undefined,
+            ...(isWhm ? { whm: { breaths: whm.breaths, rounds: whm.rounds, retention: whm.retention } } : {}),
           },
           ...sessions,
         ].slice(0, 50));
@@ -319,7 +319,7 @@ function Index() {
     setCycles(0);
     whmIdxRef.current = 0;
     whmRemainRef.current = 0;
-    setWhmStep({ label: "", remain: 0, kind: "inhale" });
+    setWhmStep({ label: "", dur: 0, remain: 0, kind: "inhale" });
   };
 
   const cur = PHASES[phase] ?? { key: "inhale" as const, label: "Inhale" };
